@@ -51,8 +51,8 @@ class MecaDataset:
 
 def loader(filelist, num_workers=8):
     ds = MecaDataset(filelist)
-    bs = num_workers
-    dl = DataLoader(ds, num_workers=num_workers, batch_size=bs, collate_fn=lambda x:x)
+    bs = 1
+    dl = DataLoader(ds, num_workers=0, batch_size=bs, collate_fn=lambda x:x)
     for batch in dl:
         for xi in batch:
             for fig_i in xi:
@@ -73,7 +73,10 @@ class ShuffledIter:
 def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards="."):
     filelist = [f.strip() for f in open(filelist).readlines()]
     nb_shards = 1
-    sinks = [wds.TarWriter(os.path.join(path_shards, f"shard-{i:05d}.tar")) for i in range(nb_shards)]
+    fds = [
+        fsspec.open(os.path.join(path_shards, f"shard-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
+    ]
+    sinks = [wds.TarWriter(fd) for fd in fds]
     sink_iter = iter(ShuffledIter(sinks))
     for data in loader(filelist):
         key = data["url"].replace("s3://", "").replace("/", "_") + data["img_path"].replace("/", "_")
@@ -88,6 +91,8 @@ def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards="."):
         break
     for s in sinks:
         s.close()
+    for fd in fds:
+        fd.close()
 
 if __name__ == "__main__":
     run([extract_figure_caption_pairs])
