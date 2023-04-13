@@ -32,6 +32,8 @@ def parse_meca(path):
                     continue
                 except ValueError:
                     continue
+                except Exception:
+                    continue
             if not dicts_out:
                 continue
             for fig in dicts_out:
@@ -49,7 +51,7 @@ def parse_meca(path):
                 #output.append(datum)
                 yield datum 
     #print(time.time() - t0)
-    return output
+    #return output
 
 class MecaDataset:
 
@@ -112,10 +114,9 @@ class ShuffledIter:
 
 
 
-def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards="."):
+def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_workers=1):
     filelist = [f.strip() for f in open(filelist).readlines()]
-    filelist = filelist[0:1000]
-    nb_shards = 1
+    filelist = filelist[0:1]
     fds = [
         fsspec.open(os.path.join(path_shards, f"shard-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
     ]
@@ -123,18 +124,19 @@ def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards="."):
     sink_iter = iter(ShuffledIter(sinks))
     nb = 0
     t0 = time.time()
-    for data in loader(filelist):
-        
-        key = data["url"].replace("s3://", "").replace("/", "_") + data["img_path"].replace("/", "_")
+    idx = 0
+    for data in loader(filelist, num_workers=num_workers):
+        #key = data["url"].replace("s3://", "").replace("/", "_") + data["img_path"].replace("/", "_").replace(".", "_")
+        key = str(nb)
         ext = os.path.splitext(data["img_path"])[-1].replace(".", "")
         datum = {
             "__key__": key,
             ext: data["img_content"],
             "txt": data["caption"],
+            "url": data["url"],
         }
         sink = next(sink_iter)
         sink.write(datum)
-        
         nb += 1
         dt = time.time() - t0
         if nb % 10 == 0:
