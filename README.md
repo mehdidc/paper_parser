@@ -23,6 +23,6 @@ time python main.py extract-figure-caption-pairs bioarxiv_file_list.txt --nb-sha
 ## Step 4: copy
 
 ```bash
-aws s3 sync medarxiv_figure_captions s3://s-laion/papers/
-aws s3 sync biorxiv_figure_captions s3://s-laion/papers/
+aws s3 sync medarxiv_figure_captions s3://s-laion/papers/medarxiv_figure_captions
+aws s3 sync biorxiv_figure_captions s3://s-laion/papers/biorxiv_figure_captions
 ```
