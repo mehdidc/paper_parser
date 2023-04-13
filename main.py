@@ -116,7 +116,7 @@ class ShuffledIter:
 
 def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_workers=1):
     filelist = [f.strip() for f in open(filelist).readlines()]
-    filelist = filelist[0:1]
+    #filelist = filelist[0:1]
     fds = [
         fsspec.open(os.path.join(path_shards, f"shard-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
     ]
