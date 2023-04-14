@@ -17,7 +17,7 @@ srun --cpus-per-task 16 --comment laion --pty /bin/bash -i
 ```bash
 time python main.py extract-figure-caption-pairs medarxiv_file_list.txt --nb-shards=2500 --path-shards=medarxiv_figure_captions --num-workers=16
 
-time python main.py extract-figure-caption-pairs bioarxiv_file_list.txt --nb-shards=2500 --path-shards=biorxiv_figure_captions --num-workers=16
+time python main.py extract-figure-caption-pairs biorxiv_file_list.txt --nb-shards=2500 --path-shards=biorxiv_figure_captions --num-workers=16
 ```
 
 ## Step 4: copy
@@ -26,3 +26,6 @@ time python main.py extract-figure-caption-pairs bioarxiv_file_list.txt --nb-sha
 aws s3 sync medarxiv_figure_captions s3://s-laion/papers/medarxiv_figure_captions
 aws s3 sync biorxiv_figure_captions s3://s-laion/papers/biorxiv_figure_captions
 ```
+
+
+Options to make to make it quicker: <https://github.com/aws/aws-cli/blob/develop/awscli/topics/s3-config.rst>

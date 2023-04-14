@@ -44,8 +44,11 @@ def parse_meca(path):
                 if caption is None:
                     continue
                 img_path  = "content/" + graphic_ref
-                with zip_file.open(img_path) as img_file:
-                    img_content = img_file.read()
+                try:
+                    with zip_file.open(img_path) as img_file:
+                        img_content = img_file.read()
+                except Exception:
+                    continue
                 datum = {"url": path, "caption": caption, "img_content": img_content, "img_path": img_path}
                 #print(caption, len(img_content), img_path)
                 #output.append(datum)
@@ -79,7 +82,10 @@ class MecaIterableDataset(torch.utils.data.IterableDataset):
     def __iter__(self):
         print(self.start, self.end)
         for fs in self.filelist[self.start:self.end]:
-            yield from parse_meca(fs)
+            try:
+                yield from parse_meca(fs)
+            except Exception as ex:
+                print(ex)
 
 def worker_init_fn(worker_id):
     worker_info = torch.utils.data.get_worker_info()

@@ -75,9 +75,9 @@ train_transform = transforms.Compose([
         transforms.Resize(512),
         #transforms.Re(512, scale=(0.95, 1.0), interpolation=3),
     ])
-#pipeline = [ResampledShards2("/p/fastdata/datasets/pubmed/figure-captions2/{00000:02499}.tar")]
-#pipeline = [ResampledShards2("medarxiv_figure_captions/shard-02244.tar")]
-pipeline = [ResampledShards2("shard-00000.tar")]
+#pipeline = [ResampledShards2("/p/fastdata/datasets/pubmed/figure-captions2/{00000..02499}.tar")]
+pipeline = [ResampledShards2("medarxiv_figure_captions/shard-{00000..02499}.tar")]
+#pipeline = [ResampledShards2("shard-00000.tar")]
 
 pipeline.extend([
     wds.split_by_node,
