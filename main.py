@@ -10,6 +10,7 @@ import zipfile
 import pubmed_parser as pp
 import fsspec
 import io
+from arxiv import ArxivFigureCaptions
 
 def parse_meca(path):
     output = []
@@ -99,8 +100,15 @@ def worker_init_fn(worker_id):
     dataset.end = min(dataset.start + per_worker, overall_end)
 
 
-def loader(filelist, num_workers=16):
-    ds = MecaIterableDataset(filelist)
+def loader(filelist, num_workers=16, processor="pubmed"):
+    if processor == "pubmed":
+        ds = MecaIterableDataset(filelist)
+    elif processor == "arxiv":
+        ds = ArxivFigureCaptions(filelist)
+    else:
+        raise ValueError(processor)
+    
+
     bs = max(num_workers, 1)
     #dl = DataLoader(ds, num_workers=0, batch_size=bs, collate_fn=lambda x:x)
     dl = DataLoader(ds, num_workers=bs, batch_size=bs, collate_fn=lambda x:x, worker_init_fn=worker_init_fn)
@@ -120,9 +128,8 @@ class ShuffledIter:
 
 
 
-def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_workers=1):
+def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="meca"):
     filelist = [f.strip() for f in open(filelist).readlines()]
-    #filelist = filelist[0:1]
     fds = [
         fsspec.open(os.path.join(path_shards, f"shard-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
     ]
@@ -131,7 +138,7 @@ def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_
     nb = 0
     t0 = time.time()
     idx = 0
-    for data in loader(filelist, num_workers=num_workers):
+    for data in loader(filelist, processor=processor, num_workers=num_workers):
         #key = data["url"].replace("s3://", "").replace("/", "_") + data["img_path"].replace("/", "_").replace(".", "_")
         key = str(nb)
         ext = os.path.splitext(data["img_path"])[-1].replace(".", "")
@@ -145,12 +152,14 @@ def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_
         sink.write(datum)
         nb += 1
         dt = time.time() - t0
-        if nb % 10 == 0:
+        if nb % 100 == 0:
             print(nb, nb / dt)
+            break
     for s in sinks:
         s.close()
     for fd in fds:
         fd.close()
+
 
 if __name__ == "__main__":
     run([extract_figure_caption_pairs])
