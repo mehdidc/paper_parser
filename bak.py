@@ -11,16 +11,9 @@ import os
 import tarfile
 import fsspec
 from pdf2image import convert_from_bytes
-from latex_render import latex2image, latex2imagev2
-import objgraph
 
-from pympler.tracker import SummaryTracker
-from pympler import summary, muppy  
+import pprofile
 
-from pympler.classtracker import ClassTracker
-from pympler import web
-
-from mem_top import mem_top
 class ArxivFigureCaptions(torch.utils.data.IterableDataset):
 
     def __init__(self, filelist, start=None, end=None):
@@ -40,9 +33,6 @@ class ArxivFigureCaptions(torch.utils.data.IterableDataset):
             except Exception as ex:
                 print(ex)
 
-    def __len__(self):
-        return len(self.filelist[self.start:self.end])
-
 class ArxivEquations(torch.utils.data.IterableDataset):
 
     def __init__(self, filelist, start=None, end=None):
@@ -61,76 +51,28 @@ class ArxivEquations(torch.utils.data.IterableDataset):
                 yield from parse_arxiv_shard_tar(fs, extract=["math"])
             except Exception as ex:
                 print(ex)
-    def __len__(self):
-        return len(self.filelist[self.start:self.end])
 
-#tracker = SummaryTracker()
 
 def parse_arxiv_shard_tar(path, extract=["figure_captions"]):
     """
     arxiv dump is divided into multiple shards (tar format),
     and in each  shard there are multiple papers
     """
-
-    of = None
-    try:
-        of = fsspec.open(path)        
-        with of as fd:
-            data = fd.read()
-        of.close()
-    except Exception:
-        of.close()
-        return
+    of = fsspec.open(path)
+    with of as fd:
+        data = fd.read()
+    of.close()
     fd = io.BytesIO(data)
     tar = tarfile.open(fileobj=fd)
-    #import gc
-    members = tar.getmembers()
-    #members = members[0:10]
-    for member in members:
-        
-        """
-        all_objects = muppy.get_objects()
-        all_objects = muppy.filter(all_objects, Type=list)
-        all_objects = muppy.sort(all_objects)[::-1]
-        for o in all_objects[0:5]:
-            print(str(o[0:1])[0:100])
-            break
-        """
-        #sum1 = summary.summarize(all_objects)
-        #summary.print_(sum1)
-        #continue
-        #tracker.create_snapshot()
-        
+
+    for member in tar.getmembers():
         if member.name.endswith(".gz"):
-            f = tar.extractfile(member)
-            data = f.read()
-            f.close()
-            
-            
-
+            #print(member.name)
+            data = tar.extractfile(member).read()
             fd_gz = io.BytesIO(data)
+            #print(f"Extraction of {member.name} done in {dl} seconds")
+            # process each paper of the shard
             yield from parse_arxiv_paper_tar_gz(fd_gz, member.name, extract=extract)
-            fd_gz.close()
-            del fd_gz
-            #break
-            #all_objects = muppy.get_objects()
-            #sum1 = summary.summarize(all_objects)
-            #summary.print_(sum1)
-            
-
-            print(mem_top())
-    tar.close()
-    fd.close()
-    del fd
-def parse_arxiv_shard_tar_to_list(path, extract):
-    return list(parse_arxiv_shard_tar(path, extract=extract))
-
-
-def clean(data):
-    lines = data.split("\n")
-    lines = [l for l in lines if not l.strip().startswith("%")]
-    return "\n".join(lines)
-
 
 def extract_figure_caption_pairs(data, filelist):
     """
@@ -139,93 +81,40 @@ def extract_figure_caption_pairs(data, filelist):
     """
     figs = re.findall(r"\\begin\{figure\*?\}(.*?)\\end\{figure(.*?)\}", data, flags=re.DOTALL)
     filelist_no_ext = [os.path.splitext(f)[0] for f in filelist]
-    file_to_file_with_ext = defaultdict(list)
-    for f, fnoext in zip(filelist, filelist_no_ext):
-        file_to_file_with_ext[fnoext].append(f)
-    # find start figure tag
-    figs_enter = re.finditer(r"\\begin\{figure\*?\}", data)
-
-    for fig_enter in figs_enter:
-        # find end figure tag
-        fig_close = data[fig_enter.start():fig_enter.end()].replace("\\begin", r"\\end").replace("*", r"\*")
-        text_from_fig_enter = data[fig_enter.end():]
-        match = re.search(fig_close, text_from_fig_enter, flags=re.DOTALL)
-        if not match:
-            continue
-        # inside figure content
-        fig = text_from_fig_enter[:match.start()]
-
-        # do TexSoup on it to parse
-        try:
-            soup = TexSoup("\\begin{figure}" + fig + "\\end{figure}")
-        except Exception as ex:
-            fd = open("debug.txt", "w")
-            fd.write(dt)
-            fd.write("\nXXXXXXXXXXXXXXXXXXXXXXXX")
-            fd.write(fig)
-            fd.close()
-            sys.exit(0)
-           
-
-        
-        for node in nodes(soup):
-            # process all nodes inside figure
-
-            # caption node
-            if node.name == "caption" and (node.parent.name in ("figure", "subfigure")):
-                parent = node.parent
-                fname = None
-                # find the corresponding figure path
-                for n in parent.children:
-                    if n.name == "epsfbox":
-                        fname = node_to_string(n)
-                    elif n.name == "includegraphics":
-                        for arg in n.args:
-                            if arg.string in (filelist):
-                                fname = str(arg.string)
-                                break
-                            elif arg.string in filelist_no_ext:
-                                fname = file_to_file_with_ext[str(arg.string)][0]
-                                break
-                    else:
-                        # what else?
-                        pass
-                    if fname:
-                        break
-                if not fname:
-                    continue
-                parent_text = str(parent)
-                yield (fname, node_to_string(node))
-
-        """
-
-        
-        subfigs = []
-        fname_global = None
+    for fig in figs:
         caption_global = None
+        fname_global = None
+        subfigs = []
+        try:
+            soup = TexSoup("\\begin{figure}" + fig[0] + "\\end{figure}")
+        except Exception:
+            with open("debug.txt", "w") as fd:
+                fd.write(fig[0])
+            raise
         for node in soup.children[0].children:
             if node.name == "subfigure":
                 fname = None
                 caption = None
                 for subfig_node in node.children:
                     if subfig_node.name == "caption":
-                        caption = node_to_string(subfig_node)
+                        caption = everything_s(subfig_node)
                     elif subfig_node.name == "includegraphics":
                         for arg in subfig_node.args:
                             if arg.string in filelist or arg.string in filelist_no_ext:
                                 fname = str(arg.string)
                     elif subfig_node.name == "epsfbox":
-                        fname = node_to_string(subfig_node)
+                        fname = everything_s(subfig_node)
                 if fname:
                     subfigs.append((fname, caption))
             elif node.name == "caption":
-                caption_global = node_to_string(node)
+                caption_global = everything_s(node)
             elif node.name == "includegraphics":
                  for arg in node.args:
                     if arg.string in filelist or arg.string in filelist_no_ext:
                         fname_global = str(arg.string)
             elif node.name == "epsfbox":
-                fname = node_to_string(node)
+                fname = everything_s(node)
+        #print(len(subfigs), fname_global, caption_global)
         for subfig in subfigs:
             fname, caption = subfig
             if caption is None and caption_global:
@@ -235,51 +124,43 @@ def extract_figure_caption_pairs(data, filelist):
 
         if fname_global and caption_global:
             yield fname_global, caption_global
-        """
+
 def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
     # process a single paper (usually a .tar.gz file) from a file description
-    
     t0 = time.time()
     try:
         tar = tarfile.open(fileobj=fd, mode='r:gz')
-    except Exception as ex: 
+    except Exception as ex:
         return
+    
     filelist = []
     latex_files = []
     members = {}
     for member in tar.getmembers():
         filelist.append(member.name)
         if member.name.endswith(".tex"):
-            try:
-                data = (tar.extractfile(member).read()).decode()
-            except Exception as ex:
-                continue
+            data = (tar.extractfile(member).read()).decode()
             latex_files.append(data)
         members[member.name] = member
     pairs = []
     nb = 0
     if "math" in extract:
-        nb_actual_imgs  = 0
         for latex in latex_files:
             for eq in extract_math(latex):
-                img = latex2imagev2(eq)
-                if img is not None:
-                    yield {"caption": eq, "img_content": img, "url": url, "img_path": "img.png"}
-                    nb += 1
-         
+                yield {"equation": eq}
+    
     if "figure_captions" in extract:
         nb_actual_imgs  = 0
         for latex in latex_files:
             t0 = time.time()
-            latex = clean(latex)
             nb_actual_imgs += len(re.findall("includegraphics", latex))
-            pairs.extend(extract_figure_caption_pairs(latex, filelist))
+            pairs.extend(list(extract_figure_caption_pairs(latex, filelist)))
         for img_path, caption in pairs:
             member = members[img_path]
             name, ext = os.path.splitext(member.name)
             data = (tar.extractfile(member).read())
             
-            if ext == ".pdf":
+            if ext == ".pdf" and False:
                 t0 = time.time()
                 images_pil = convert_from_bytes(data)
                 if len(images_pil) != 1:
@@ -292,28 +173,25 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
             else:
                 full_name = member.name
             #print(full_name)
-
-            if os.path.splitext(full_name)[1] == '':
-                continue
             yield {"img_content": data, "caption": caption, "img_path": full_name, "url": url}
             nb += 1
     tar.close()
-    print(f"Finished {url} in {time.time() - t0} in {os.getpid()} with {nb} pairs, there are {nb_actual_imgs} includegraphics")
+    print(f"Finished {url} in {time.time() - t0} in {os.getpid()} with {nb} pairs, but there are {nb_actual_imgs} includegraphics")
 
-def node_to_string(tex_tree):
+def everything_s(tex_tree):
     """
     Return the string repr of a Tex node
     """
     result = []
     for tex_code in tex_tree:
         if isinstance(tex_code, TexEnv):
-            result.append(tex_code.begin + str(tex_code.args), node_to_string(tex_code.all), tex_code.end)
+            result.append(tex_code.begin + str(tex_code.args), everything(tex_code.all), tex_code.end)
         elif isinstance(tex_code, TexCmd):
             result.append("\\" + tex_code.name + str(tex_code.args))
         elif isinstance(tex_code,TexText):
             result.append(tex_code.text)
         elif isinstance(tex_code,TexGroup):
-            result.append("{", node_to_string(TexSoup(tex_code.value).expr.all), "}")
+            result.append("{", everything(TexSoup(tex_code.value).expr.all), "}")
         else:
             result.append(str(tex_code))
 
@@ -325,13 +203,14 @@ def extract_math(latex_code):
     """
     values = re.findall(r"\$(.*?)\$", latex_code)
     eqs = re.findall(r"\\begin\{equation\}(.*?)\\end\{equation\}", latex_code)
-    #print(len(eqs))
+    print(len(eqs))
     values = values + eqs
     eqs = re.findall(r"\\begin\{math\}(.*?)\\end\{math\}", latex_code)
-    #print(len(eqs))
+    print(len(eqs))
     values = values + eqs
     return values
-    """
+
+
     t0 = time.time()
     soup = TexSoup(latex_code, tolerance=1)
     print(time.time() - t0)
@@ -345,7 +224,6 @@ def extract_math(latex_code):
             continue
         values.append(value)
     return values
-    """
 
 def nodes(s):
     """

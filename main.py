@@ -10,8 +10,11 @@ import zipfile
 import pubmed_parser as pp
 import fsspec
 import io
-from arxiv import ArxivFigureCaptions
+from joblib import Parallel, delayed
+from arxiv import ArxivFigureCaptions, ArxivEquations, parse_arxiv_shard_tar_to_list
 
+def parse_meca_to_list(path):
+    return list(parse_meca(path))
 def parse_meca(path):
     output = []
     of = fsspec.open(path)
@@ -100,21 +103,51 @@ def worker_init_fn(worker_id):
     dataset.end = min(dataset.start + per_worker, overall_end)
 
 
-def loader(filelist, num_workers=16, processor="pubmed"):
-    if processor == "pubmed":
-        ds = MecaIterableDataset(filelist)
-    elif processor == "arxiv":
+def get_ds(filelist, processor):
+    if processor == "meca":
+        ds = MecaIterableDataset(filelist)  
+    elif processor == "arxiv_figure_captions":
         ds = ArxivFigureCaptions(filelist)
+    elif processor == "arxiv_equations":
+        ds = ArxivEquations(filelist)
     else:
         raise ValueError(processor)
-    
+    return ds
+
+
+def get_fn(filelist, processor):
+    if processor == "meca":
+        return parse_meca_to_list, {}
+    elif processor == "arxiv_figure_captions":
+        return parse_arxiv_shard_tar_to_list, {"extract": "figure_captions"}
+    elif processor == "arxiv_equations":
+        return parse_arxiv_shard_tar_to_list, {"extract": "math"}
+    else:
+        raise ValueError(processor)
+
+
+def loader(filelist, num_workers=16, processor="meca"):
+
+
+    ds = get_ds(filelist, processor)
 
     bs = max(num_workers, 1)
     #dl = DataLoader(ds, num_workers=0, batch_size=bs, collate_fn=lambda x:x)
-    dl = DataLoader(ds, num_workers=bs, batch_size=bs, collate_fn=lambda x:x, worker_init_fn=worker_init_fn)
+    dl = DataLoader(ds, num_workers=num_workers, batch_size=bs, collate_fn=lambda x:x, worker_init_fn=worker_init_fn)
     for batch in dl:
         for fig_i in batch:
             yield fig_i
+
+
+def loader2(filelist, num_workers=16, processor="meca"):
+    fn, kw = get_fn(filelist, processor)
+    with Parallel(n_jobs=num_workers, backend="multiprocessing") as parallel:
+        for i in range(0, len(filelist), num_workers):
+            fs = filelist[i:i+num_workers]
+            results = parallel(delayed(fn)(f, **kw) for f in fs)
+            for r in results:
+                yield from r
+
 
 class ShuffledIter:
 
@@ -127,9 +160,11 @@ class ShuffledIter:
             yield from self.data
 
 
-
-def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="meca"):
+def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="meca", writer="wds", total:int=None):
+    import random
+    random.seed(42)
     filelist = [f.strip() for f in open(filelist).readlines()]
+    random.shuffle(filelist)
     fds = [
         fsspec.open(os.path.join(path_shards, f"shard-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
     ]
@@ -139,27 +174,36 @@ def extract_figure_caption_pairs(filelist, *, nb_shards=1, path_shards=".", num_
     t0 = time.time()
     idx = 0
     for data in loader(filelist, processor=processor, num_workers=num_workers):
-        #key = data["url"].replace("s3://", "").replace("/", "_") + data["img_path"].replace("/", "_").replace(".", "_")
+        
         key = str(nb)
-        ext = os.path.splitext(data["img_path"])[-1].replace(".", "")
-        datum = {
-            "__key__": key,
-            ext: data["img_content"],
-            "txt": data["caption"],
-            "url": data["url"],
-        }
+        if "img_content" in data:
+            ext = os.path.splitext(data["img_path"])[-1].replace(".", "")
+            datum = {
+                "__key__": key,
+                ext: data["img_content"],
+                "txt": data["caption"],
+                "url": data["url"],
+            }
+        else:
+            datum = data
+            datum['__key__'] = key
+        
         sink = next(sink_iter)
         sink.write(datum)
+        #print(len(sink.tarstream.members))
+        sink.tarstream.members = []
         nb += 1
-        dt = time.time() - t0
-        if nb % 100 == 0:
-            print(nb, nb / dt)
+        if total and nb == total:
             break
+        dt = time.time() - t0
+        if nb % 1000 == 0:
+            print(nb, nb / dt)
     for s in sinks:
         s.close()
     for fd in fds:
         fd.close()
+    print("Total:", nb)
 
 
 if __name__ == "__main__":
-    run([extract_figure_caption_pairs])
+    run([extract])
