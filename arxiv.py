@@ -118,7 +118,7 @@ def parse_arxiv_shard_tar(path, extract=["figure_captions"]):
             #summary.print_(sum1)
             
 
-            print(mem_top())
+            #print(mem_top())
     tar.close()
     fd.close()
     del fd
@@ -263,9 +263,8 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
         for latex in latex_files:
             for eq in extract_math(latex):
                 img = latex2imagev2(eq)
-                if img is not None:
-                    yield {"caption": eq, "img_content": img, "url": url, "img_path": "img.png"}
-                    nb += 1
+                yield {"caption": eq, "img_content": img, "url": url, "img_path": "img.png"}
+                nb += 1
          
     if "figure_captions" in extract:
         nb_actual_imgs  = 0

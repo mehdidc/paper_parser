@@ -9,6 +9,8 @@ import os
 import zipfile
 import pubmed_parser as pp
 import fsspec
+
+from writer import TarWriter
 import io
 from joblib import Parallel, delayed
 from arxiv import ArxivFigureCaptions, ArxivEquations, parse_arxiv_shard_tar_to_list
@@ -168,36 +170,38 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
     fds = [
         fsspec.open(os.path.join(path_shards, f"shard-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
     ]
-    sinks = [wds.TarWriter(fd) for fd in fds]
+    sinks = [TarWriter(fd, append=False) for fd in fds]
     sink_iter = iter(ShuffledIter(sinks))
     nb = 0
     t0 = time.time()
     idx = 0
-    for data in loader(filelist, processor=processor, num_workers=num_workers):
-        
-        key = str(nb)
-        if "img_content" in data:
-            ext = os.path.splitext(data["img_path"])[-1].replace(".", "")
-            datum = {
-                "__key__": key,
-                ext: data["img_content"],
-                "txt": data["caption"],
-                "url": data["url"],
-            }
-        else:
-            datum = data
-            datum['__key__'] = key
-        
-        sink = next(sink_iter)
-        sink.write(datum)
-        #print(len(sink.tarstream.members))
-        sink.tarstream.members = []
-        nb += 1
-        if total and nb == total:
-            break
-        dt = time.time() - t0
-        if nb % 1000 == 0:
-            print(nb, nb / dt)
+
+    BS = num_workers
+    for i in range(0, len(filelist), BS):
+        for data in loader(filelist[i:i+BS], processor=processor, num_workers=num_workers):
+            key = str(nb)
+            if "img_content" in data:
+                ext = os.path.splitext(data["img_path"])[-1].replace(".", "")
+                datum = {
+                    "__key__": key,
+                    ext: data["img_content"],
+                    "txt": data["caption"],
+                    "url": data["url"],
+                }
+            else:
+                datum = data
+                datum['__key__'] = key
+            
+            sink = next(sink_iter)
+            sink.write(datum)
+            #print(len(sink.tarstream.members))
+            sink.tarstream.members = []
+            nb += 1
+            if total and nb == total:
+                break
+            dt = time.time() - t0
+            if nb % 1000 == 0:
+                print(nb, nb / dt)
     for s in sinks:
         s.close()
     for fd in fds:
