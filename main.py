@@ -1,3 +1,4 @@
+import random
 import tarfile
 import math
 import torch
@@ -14,161 +15,10 @@ import fsspec
 from writer import TarWriter
 import io
 from joblib import Parallel, delayed
+
+from meca import MecaIterableDataset, parse_meca_to_list
 from arxiv import ArxivFigureCaptions, ArxivEquations, parse_arxiv_shard_tar_to_list
-
-def parse_meca_to_list(path):
-    return list(parse_meca(path))
-
-
-def parse_pubmed(path):
-    of = fsspec.open(path)
-    with of as fd:
-        data = fd.read()
-    of.close()
-    fd = io.BytesIO(data)
-    t0 = time.time()
-    tar = tarfile.open(fileobj=fd)
-    #import gc
-    members = tar.getmembers()
-    member_by_name_jpg = {os.path.basename(m.name).replace('.jpg', ''): m for m in members if m.name.endswith("jpg")}
-    member_by_name_png = {os.path.basename(m.name).replace('.png', ''): m for m in members if m.name.endswith("png")}
-    for f in members:
-        #print(f.name)
-        if not f.name.endswith(".nxml"):
-            continue
-        mfd = tar.extractfile(f)
-        xml_content = mfd.read()
-        mfd.close()
-        try:
-            dicts_out = pp.parse_pubmed_caption(xml_content)
-        except AttributeError:
-            continue
-        except ValueError:
-            continue
-        except Exception:
-            continue
-        if not dicts_out:
-            continue
-        for fig in dicts_out:
-            caption = fig['fig_caption']
-            graphic_ref = fig['graphic_ref']
-            if graphic_ref is None:
-                continue
-            if caption is None:
-                continue
-            img_path  = graphic_ref
-            if img_path in member_by_name_jpg:
-                member = member_by_name_jpg[img_path]
-                img_path = os.path.basename(member.name)
-            elif img_path in member_by_name_png:
-                member = member_by_name_png[img_path]
-                img_path = os.path.basename(member.name)
-            else:
-                continue
-            try:
-                mfd = tar.extractfile(member)
-                img_content = mfd.read()
-                mfd.close()
-            except Exception:
-                continue
-            datum = {"url": path, "caption": caption, "img_content": img_content, "img_path": img_path}
-            yield datum 
-
-def parse_meca(path):
-    output = []
-    of = fsspec.open(path)
-    with of as fd:
-        data = fd.read()
-    of.close()
-    fd = io.BytesIO(data)
-    t0 = time.time()
-    with zipfile.ZipFile(fd, mode='r') as zip_file:
-        for f in zip_file.filelist:
-            if not f.filename.startswith("content/"):
-                continue
-            if not f.filename.endswith(".xml"):
-                continue
-            with zip_file.open(f.filename) as xml_file:
-                try:
-                    dicts_out = pp.parse_pubmed_caption(xml_file)
-                except AttributeError:
-                    continue
-                except ValueError:
-                    continue
-                except Exception:
-                    continue
-            if not dicts_out:
-                continue
-            for fig in dicts_out:
-                caption = fig['fig_caption']
-                graphic_ref = fig['graphic_ref']
-                if graphic_ref is None:
-                    continue
-                if caption is None:
-                    continue
-                img_path  = "content/" + graphic_ref
-                try:
-                    with zip_file.open(img_path) as img_file:
-                        img_content = img_file.read()
-                except Exception:
-                    continue
-                datum = {"url": path, "caption": caption, "img_content": img_content, "img_path": img_path}
-                #print(caption, len(img_content), img_path)
-                #output.append(datum)
-                yield datum 
-    #print(time.time() - t0)
-    #return output
-
-class MecaDataset:
-
-    def __init__(self, filelist):
-        self.filelist = filelist
-
-    def __getitem__(self, idx):
-        path = self.filelist[idx]
-        return parse_meca(path)
-
-    def __len__(self):
-        return len(self.filelist)
-
-class MecaIterableDataset(torch.utils.data.IterableDataset):
-    def __init__(self, filelist, start=None, end=None):
-        super().__init__()
-        if start is None and end is None:
-            start = 0
-            end = len(filelist)
-        assert end > start, "this example code only works with end >= start"
-        self.start = start
-        self.end = end
-        self.filelist = filelist
-
-    def __iter__(self):
-        print(self.start, self.end)
-        for fs in self.filelist[self.start:self.end]:
-            try:
-                yield from parse_meca(fs)
-            except Exception as ex:
-                print(ex)
-
-
-class PubMedIterableDataset(torch.utils.data.IterableDataset):
-    def __init__(self, filelist, start=None, end=None):
-        super().__init__()
-        if start is None and end is None:
-            start = 0
-            end = len(filelist)
-        assert end > start, "this example code only works with end >= start"
-        self.start = start
-        self.end = end
-        self.filelist = filelist
-
-    def __iter__(self):
-        print(self.start, self.end)
-        for fs in self.filelist[self.start:self.end]:
-            try:
-                yield from parse_pubmed(fs)
-            except Exception as ex:
-                print(ex)
+from pubmed import PubMedIterableDataset, parse_pubmed_to_list
 
 def worker_init_fn(worker_id):
     worker_info = torch.utils.data.get_worker_info()
@@ -197,7 +47,7 @@ def get_ds(filelist, processor):
 
 
 def get_fn(filelist, processor):
-    if processor == "meca":
+    if processor  in ("biorxiv", "medarxiv"):
         return parse_meca_to_list, {}
     elif processor == "arxiv_figure_captions":
         return parse_arxiv_shard_tar_to_list, {"extract": "figure_captions"}
@@ -241,9 +91,8 @@ class ShuffledIter:
             yield from self.data
 
 
-def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="medarxiv", writer="wds", total:int=None, chunk_size:int=None):
-    import random
-    random.seed(42)
+def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="medarxiv", writer="wds", total:int=None, chunk_size:int=None, seed=42):
+    random.seed(seed)
     filelist = [f.strip() for f in open(filelist).readlines()]
     random.shuffle(filelist)
     fds = [
@@ -253,10 +102,9 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
     sink_iter = iter(ShuffledIter(sinks))
     nb = 0
     t0 = time.time()
-    idx = 0
     BS = chunk_size if chunk_size else len(filelist)
     for i in range(0, len(filelist), BS):
-        print("CHUNK:", i, "to", i+BS, " / ", len(filelist), time.time() - t0)
+        print(f"Processing filelist chunk from {i} to {i+BS},  current elapsed time = {time.time()-t0} seconds.")
         for data in loader(filelist[i:i+BS], processor=processor, num_workers=num_workers):
             key = str(nb)
             if "img_content" in data:
@@ -279,12 +127,12 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
                 break
             dt = time.time() - t0
             if nb % 1000 == 0:
-                print(nb, nb / dt)
+                print(f"Number of samples written: {nb}, Speed: {nb/dt} samples/s")
     for s in sinks:
         s.close()
     for fd in fds:
         fd.close()
-    print("Total:", nb)
+    print("Total samples written:", nb)
 
 
 if __name__ == "__main__":
