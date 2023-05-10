@@ -1,3 +1,4 @@
+import tarfile
 import math
 import torch
 import time
@@ -17,6 +18,62 @@ from arxiv import ArxivFigureCaptions, ArxivEquations, parse_arxiv_shard_tar_to_
 
 def parse_meca_to_list(path):
     return list(parse_meca(path))
+
+
+def parse_pubmed(path):
+    of = fsspec.open(path)
+    with of as fd:
+        data = fd.read()
+    of.close()
+    fd = io.BytesIO(data)
+    t0 = time.time()
+    tar = tarfile.open(fileobj=fd)
+    #import gc
+    members = tar.getmembers()
+    member_by_name_jpg = {os.path.basename(m.name).replace('.jpg', ''): m for m in members if m.name.endswith("jpg")}
+    member_by_name_png = {os.path.basename(m.name).replace('.png', ''): m for m in members if m.name.endswith("png")}
+    for f in members:
+        #print(f.name)
+        if not f.name.endswith(".nxml"):
+            continue
+        mfd = tar.extractfile(f)
+        xml_content = mfd.read()
+        mfd.close()
+        try:
+            dicts_out = pp.parse_pubmed_caption(xml_content)
+        except AttributeError:
+            continue
+        except ValueError:
+            continue
+        except Exception:
+            continue
+        if not dicts_out:
+            continue
+        for fig in dicts_out:
+            caption = fig['fig_caption']
+            graphic_ref = fig['graphic_ref']
+            if graphic_ref is None:
+                continue
+            if caption is None:
+                continue
+            img_path  = graphic_ref
+            if img_path in member_by_name_jpg:
+                member = member_by_name_jpg[img_path]
+                img_path = os.path.basename(member.name)
+            elif img_path in member_by_name_png:
+                member = member_by_name_png[img_path]
+                img_path = os.path.basename(member.name)
+            else:
+                continue
+            try:
+                mfd = tar.extractfile(member)
+                img_content = mfd.read()
+                mfd.close()
+            except Exception:
+                continue
+            datum = {"url": path, "caption": caption, "img_content": img_content, "img_path": img_path}
+            yield datum 
+
 def parse_meca(path):
     output = []
     of = fsspec.open(path)
@@ -93,6 +150,26 @@ class MecaIterableDataset(torch.utils.data.IterableDataset):
             except Exception as ex:
                 print(ex)
 
+
+class PubMedIterableDataset(torch.utils.data.IterableDataset):
+    def __init__(self, filelist, start=None, end=None):
+        super().__init__()
+        if start is None and end is None:
+            start = 0
+            end = len(filelist)
+        assert end > start, "this example code only works with end >= start"
+        self.start = start
+        self.end = end
+        self.filelist = filelist
+
+    def __iter__(self):
+        print(self.start, self.end)
+        for fs in self.filelist[self.start:self.end]:
+            try:
+                yield from parse_pubmed(fs)
+            except Exception as ex:
+                print(ex)
+
 def worker_init_fn(worker_id):
     worker_info = torch.utils.data.get_worker_info()
     dataset = worker_info.dataset  # the dataset copy in this worker process
@@ -106,8 +183,10 @@ def worker_init_fn(worker_id):
 
 
 def get_ds(filelist, processor):
-    if processor == "meca":
+    if processor in ("biorxiv", "medarxiv"):
         ds = MecaIterableDataset(filelist)  
+    elif processor in ("pubmed",):
+        ds = PubMedIterableDataset(filelist)
     elif processor == "arxiv_figure_captions":
         ds = ArxivFigureCaptions(filelist)
     elif processor == "arxiv_equations":
@@ -162,7 +241,7 @@ class ShuffledIter:
             yield from self.data
 
 
-def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="meca", writer="wds", total:int=None):
+def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="medarxiv", writer="wds", total:int=None, chunk_size:int=None):
     import random
     random.seed(42)
     filelist = [f.strip() for f in open(filelist).readlines()]
@@ -175,9 +254,9 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
     nb = 0
     t0 = time.time()
     idx = 0
-
-    BS = num_workers
+    BS = chunk_size if chunk_size else len(filelist)
     for i in range(0, len(filelist), BS):
+        print("CHUNK:", i, "to", i+BS, " / ", len(filelist), time.time() - t0)
         for data in loader(filelist[i:i+BS], processor=processor, num_workers=num_workers):
             key = str(nb)
             if "img_content" in data:
@@ -191,11 +270,10 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
             else:
                 datum = data
                 datum['__key__'] = key
-            
             sink = next(sink_iter)
             sink.write(datum)
             #print(len(sink.tarstream.members))
-            sink.tarstream.members = []
+            #sink.tarstream.members = []
             nb += 1
             if total and nb == total:
                 break

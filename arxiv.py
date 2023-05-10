@@ -263,7 +263,8 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
         for latex in latex_files:
             for eq in extract_math(latex):
                 img = latex2imagev2(eq)
-                yield {"caption": eq, "img_content": img, "url": url, "img_path": "img.png"}
+                if img is not None:
+                    yield {"caption": eq, "img_content": img, "url": url, "img_path": "img.png"}
                 nb += 1
          
     if "figure_captions" in extract:
@@ -297,7 +298,7 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
             yield {"img_content": data, "caption": caption, "img_path": full_name, "url": url}
             nb += 1
     tar.close()
-    print(f"Finished {url} in {time.time() - t0} in {os.getpid()} with {nb} pairs, there are {nb_actual_imgs} includegraphics")
+    #print(f"Finished {url} in {time.time() - t0} in {os.getpid()} with {nb} pairs, there are {nb_actual_imgs} includegraphics")
 
 def node_to_string(tex_tree):
     """

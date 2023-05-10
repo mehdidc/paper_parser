@@ -29,7 +29,10 @@ def latex2imagev2(math):
     try:
         mathtext.math_to_image('$' + math + '$', fd, prop=texFont, dpi=100, format='png')
     except Exception:
-        return Image.new(size=(1, 1), mode='RGB')
+        fd.close()
+        return None
+        #return latex2image(math)
+        #return Image.new(size=(1, 1), mode='RGB')
     data = fd.getvalue()
     fd.close()
     #gc.collect()
