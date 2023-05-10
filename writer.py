@@ -303,7 +303,6 @@ class TarWriter:
         else:
             tarmode = "w|gz" if compress is True else f"{tm}|"
             self.own_fileobj = None
-        print(tarmode)
         self.encoder = make_encoder(encoder)
         self.keep_meta = keep_meta
         self.stream = fileobj

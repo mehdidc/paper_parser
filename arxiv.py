@@ -1,3 +1,4 @@
+from collections import defaultdict
 import re
 import time
 import torch
@@ -21,6 +22,7 @@ from pympler.classtracker import ClassTracker
 from pympler import web
 
 from mem_top import mem_top
+
 class ArxivFigureCaptions(torch.utils.data.IterableDataset):
 
     def __init__(self, filelist, start=None, end=None):
