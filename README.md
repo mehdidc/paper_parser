@@ -3,7 +3,9 @@
 
 ## Step 1 - Download raw data
 
-`aws  s3 sync s3://biorxiv-src-monthly s3://s-laion/papers/biorxiv --request-payer`
+```bash
+aws  s3 sync s3://biorxiv-src-monthly s3://s-laion/papers/biorxiv --request-payer
+```
 
 ## Step 2 - create file list
 
@@ -31,11 +33,15 @@ Options to make to make it quicker: <https://github.com/aws/aws-cli/blob/develop
 
 ## Step 1 - Download raw data
 
-`aws  s3 sync s3://medrxiv-src-monthly s3://s-laion/papers/medrxiv --request-payer`
+```bash
+aws  s3 sync s3://medrxiv-src-monthly s3://s-laion/papers/medrxiv --request-payer
+```
 
 ## Step 2 - create file list
 
-`aws  s3 ls  "s3://s-laion/papers/biorxiv/"  --recursive | grep ".meca"|awk '{print "s3://s-laion/"$4}'> biorxiv_file_list.txt`
+```bash
+aws  s3 ls  "s3://s-laion/papers/biorxiv/"  --recursive | grep ".meca"|awk '{print "s3://s-laion/"$4}'> biorxiv_file_list.txt`
+```
 
 ## Step 3 - run
 
