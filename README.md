@@ -73,3 +73,7 @@ salloc --partition cpu16 --cpus-per-task 16
 srun --cpus-per-task 16 --comment laion --pty /bin/bash -i 
 time python main.py extract pubmed_file_list.txt --nb-shards=2500 --path-shards=pubmed_figure_captions --num-workers=16 --processor=pubmed
 ```
+
+## Step 3 - copy
+
+`aws s3 sync pubmed_figure_captions s3://s-laion/papers/pubmed_figure_captions`
