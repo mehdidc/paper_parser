@@ -120,14 +120,14 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
                 datum['__key__'] = key
             sink = next(sink_iter)
             sink.write(datum)
-            #print(len(sink.tarstream.members))
-            #sink.tarstream.members = []
             nb += 1
             if total and nb == total:
                 break
             dt = time.time() - t0
             if nb % 1000 == 0:
                 print(f"Number of samples written: {nb}, Speed: {nb/dt} samples/s")
+        if total and nb == total:
+            break
     for s in sinks:
         s.close()
     for fd in fds:
