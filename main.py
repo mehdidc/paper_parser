@@ -91,12 +91,17 @@ class ShuffledIter:
             yield from self.data
 
 
-def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor="medarxiv", writer="wds", total:int=None, chunk_size:int=None, seed=42):
+def extract(filelist, *, start=0, nb:int=None, nb_shards=1, path_shards=".", num_workers=1, processor="medarxiv", writer="wds", total:int=None, chunk_size:int=None, seed=42, shard_prefix="shard"):
     random.seed(seed)
     filelist = [f.strip() for f in open(filelist).readlines()]
+    if nb is None:
+        end = len(filelist)
+    else:
+        end = start + nb
+    filelist = filelist[start:end]
     random.shuffle(filelist)
     fds = [
-        fsspec.open(os.path.join(path_shards, f"shard-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
+        fsspec.open(os.path.join(path_shards, f"{shard_prefix}-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
     ]
     sinks = [TarWriter(fd, append=False) for fd in fds]
     sink_iter = iter(ShuffledIter(sinks))
@@ -122,6 +127,7 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
             sink.write(datum)
             nb += 1
             if total and nb == total:
+                print("Total reached")
                 break
             dt = time.time() - t0
             if nb % 1000 == 0:
@@ -132,7 +138,8 @@ def extract(filelist, *, nb_shards=1, path_shards=".", num_workers=1, processor=
         s.close()
     for fd in fds:
         fd.close()
-    print("Total samples written:", nb)
+    fs = str(filelist) if nb else None
+    print(f"Finished {fs}, total samples written:", nb)
 
 
 if __name__ == "__main__":
