@@ -91,7 +91,7 @@ class ShuffledIter:
             yield from self.data
 
 
-def extract(filelist, *, start=0, nb:int=None, nb_shards=1, path_shards=".", num_workers=1, processor="medarxiv", writer="wds", total:int=None, chunk_size:int=None, seed=42, shard_prefix="shard"):
+def extract(filelist, *, start=0, nb:int=None, nb_shards=1, path_shards=".", num_workers=1, processor="medarxiv", writer="wds", total:int=None, chunk_size:int=None, seed=42, shard_prefix="shard", resume=None):
     random.seed(seed)
     filelist = [f.strip() for f in open(filelist).readlines()]
     if nb is None:
@@ -99,6 +99,13 @@ def extract(filelist, *, start=0, nb:int=None, nb_shards=1, path_shards=".", num
     else:
         end = start + nb
     filelist = filelist[start:end]
+    if resume:
+        import re
+        names = re.findall("'(.+)'", open(resume).read())
+        names = set(names)
+        filelist = [fs for fs in filelist if fs not in names]
+    if not len(filelist):
+        return
     random.shuffle(filelist)
     fds = [
         fsspec.open(os.path.join(path_shards, f"{shard_prefix}-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
