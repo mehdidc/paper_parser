@@ -108,7 +108,7 @@ def extract(filelist, *, start=0, nb:int=None, nb_shards=1, path_shards=".", num
         return
     random.shuffle(filelist)
     fds = [
-        fsspec.open(os.path.join(path_shards, f"{shard_prefix}-{i:05d}.tar"),"wb").open() for i in range(nb_shards)
+        fsspec.open(os.path.join(path_shards, f"{shard_prefix}.tar"),"wb").open() for i in range(nb_shards)
     ]
     sinks = [TarWriter(fd, append=False) for fd in fds]
     sink_iter = iter(ShuffledIter(sinks))

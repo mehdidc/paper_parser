@@ -1,3 +1,4 @@
+from pathlib import Path
 from collections import defaultdict
 import re
 import time
@@ -8,7 +9,7 @@ from PIL import Image
 from clize import run
 import sys
 from TexSoup import TexSoup, read
-from TexSoup.data import TexMathModeEnv, TexEnv, TexCmd, TexText, TexGroup
+from TexSoup.data import TexMathModeEnv, TexEnv, TexCmd, TexText, TexGroup, BracketGroup
 import os
 import tarfile
 import fsspec
@@ -122,11 +123,16 @@ def extract_figure_caption_pairs(data, filelist):
     extract all figure-caption pairs by using a) latex file content and b) filelist of an existing paper (to extract image contents)
     
     """
+    subfolders = ['']
+    graphicspath = re.findall(r"\\graphicspath\{(\{.*?\})\}", data, flags=re.DOTALL)
+    for g in graphicspath:
+        g = g.replace('{', '')
+        g = g.replace('}', '')
+        subfolders.append(Path(g))
     figs = re.findall(r"\\begin\{figure\*?\}(.*?)\\end\{figure(.*?)\}", data, flags=re.DOTALL)
-    filelist_no_ext = [os.path.splitext(f)[0] for f in filelist]
-    file_to_file_with_ext = defaultdict(list)
-    for f, fnoext in zip(filelist, filelist_no_ext):
-        file_to_file_with_ext[fnoext].append(f)
+    filelist_no_ext = [Path(os.path.splitext(f)[0]) for f in filelist]
+    filelist_orig = filelist
+    filelist = [Path(fs) for fs in filelist]
     # find start figure tag
     figs_enter = re.finditer(r"\\begin\{figure\*?\}", data)
     nb = 0
@@ -139,39 +145,99 @@ def extract_figure_caption_pairs(data, filelist):
             continue
         # inside figure content
         fig = text_from_fig_enter[:match.start()]
-        if len(fig) > 2000:
-            continue
+        #if len(fig) > 2000:
+        #    print("SKIP")
+        #    continue
         # do TexSoup on it to parse
         try:
             #print(len(fig))
-            soup = TexSoup("\\begin{figure}" + fig + "\\end{figure}")
+            #soup = TexSoup("\\begin{figure}" + fig + "\\end{figure}")
+            soup = TexSoup(fig)
         except Exception as ex:
-            #print(ex)
+            print(ex)
             continue
-        for node in nodes(soup):
-            # process all nodes inside figure
+            
+        def get_filename(f):
+            for sf in subfolders:
+                s = sf / Path(f)
+                if s in (filelist):
+                    i = filelist.index(s)
+                    fname = filelist_orig[i]
+                    return fname
+                elif s in filelist_no_ext:
+                    fname = filelist_orig[filelist_no_ext.index(s)]
+                    return fname
+        fnames = []
+        caption = None
+        subcaptions = []
 
-            # caption node
-            if node.name == "caption" and (node.parent.name in ("figure", "subfigure")):
-                parent = node.parent
-                fnames = []
-                caption = node_to_string(node)
+        # global caption
+        for n in soup.children:
+            if n.name == "caption":
+                caption = node_to_string(n)
 
-                # find the corresponding figure path
-                for n in parent.children:
-                    if n.name == "epsfbox":
-                        fname = node_to_string(n)
-                        if fname in filelist or filelist_no_ext:
-                            fnames.append(fname)
-                    elif n.name == "includegraphics":
-                        for arg in n.args:
-                            if arg.string in (filelist):
-                                fname = str(arg.string)
+        # now, try to find subfigures or main figure
+        #for n in soup.children:
+        for n in nodes(soup):
+            if n.name not in ("subfigure", "subfloat", "includegraphics"):
+                continue
+            local_caption = None
+            # search caption
+            parent = n.parent
+            
+            parents = [parent.name]
+            p = parent
+            while p:
+                parents.append(p.name)
+                p = p.parent
+            if n.name == "subfloat":
+                local_caption = None
+                for arg in n.args:
+                    if type(arg) == BracketGroup:
+                        local_caption = arg.string
+            elif n.name == "subfigure":
+                for nn in n.children:
+                    if nn.name == "caption":
+                        local_caption = node_to_string(nn)
+            if n.name in ("subfloat", "subfigure"):
+                for c in nodes(n):
+                    if c.name == "includegraphics":
+                        for arg in c.args:
+                            fname = get_filename(arg.string)
+                            if fname is not None:
                                 fnames.append(fname)
-                            elif arg.string in filelist_no_ext:
-                                fname = file_to_file_with_ext[str(arg.string)][0]
-                                fnames.append(fname)
-                yield fnames, caption
+                                subcaptions.append(local_caption)
+            elif n.name == "includegraphics" and all(par not in ("subfigure", "subfloat") for par in parents):
+                # main figure
+                for arg in n.args:
+                    fname = get_filename(arg.string)
+                    if fname is not None:
+                        fnames.append(fname)
+                        subcaptions.append(None)
+        #if caption is None:
+        #    if any(sb is None for sb in subcaptions):
+        #        print(subcaptions)
+        #        sys.exit(0)
+        #        continue
+        #if any(sb is None for sb in subcaptions):
+        full_caption = ""
+        if any(sc for sc in subcaptions):
+            full_caption += "".join(f"<sf{i+1}>" + (sc if sc is not None else "") + f"</sf{i+1}>" for i, sc in enumerate(subcaptions))
+        if caption is not None:
+            full_caption += f"<f>{caption}</f>"
+            
+        #yield fnames, full_caption
+
+        #option2: all subfigures as individual examples
+        if caption is not None:
+            global_caption = f"<f>{caption}</f>"
+        else:
+            global_caption = ""
+        for i, (name, sc) in enumerate(zip(fnames, subcaptions)):
+            full_caption = f"<sf{i+1}>" + (sc if sc is not None else "") + f"</sf{i+1}>"
+            if global_caption:
+                full_caption += global_caption
+            yield [name], full_caption
 
 def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
     # process a single paper (usually a .tar.gz file) from a file description
@@ -206,7 +272,9 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
                 nb += 1
     if "figure_captions" in extract:
         nb_actual_imgs  = 0
+        latexs = ""
         for latex in latex_files:
+            latexs += latex
             t0 = time.time()
             latex = clean(latex)
             nb_actual_imgs += len(re.findall(r"\\begin\{figure", latex))
@@ -253,8 +321,10 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
             elif len(imgs) > 1:
                 
                 c = caption.lower()
-                left_or_right = "(left)" in c or "(right)" in c or r"\textbf{left}" in c or r"\textbf(right)" in c
-                top_or_bottom = "(top)" in c or "(bottom)" in c or  r"\textbf{top}" in c or r"\textbf(bottom)" in c
+                #left_or_right = "(left)" in c or "(right)" in c or r"\textbf{left}" in c or r"\textbf(right)" in c
+                #top_or_bottom = "(top)" in c or "(bottom)" in c or  r"\textbf{top}" in c or r"\textbf(bottom)" in c
+                left_or_right = "left" in c or "right" in c
+                top_or_bottom = "top" in c or "bottom" in c
 
                 if left_or_right and top_or_bottom:
                     horiz = True
@@ -264,7 +334,21 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
                     horiz = False
                 else:
                     horiz = True
+                    
+                    total_width = sum(img.width for img, data, fn in imgs)
+                    max_height = max(img.height for img, data, fn in imgs)
+                    Wa = total_width
+                    Ha = max_height
 
+                    total_height = sum(img.height for img, data, fn in imgs)
+                    max_width = max(img.width for img, data, fn in imgs)
+                    Wb = max_width
+                    Hb = total_height
+
+                    if (abs(Wa/Ha-1))  <  (abs(Wb/Hb-1)):
+                        horiz = True
+                    else:
+                        horiz = False
                 if horiz:
                     total_width = sum(img.width for img, data, fn in imgs)
                     max_height = max(img.height for img, data, fn in imgs)
@@ -298,12 +382,12 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
                 nb += 1
     tar.close()
     print(f"Finished {url} in {time.time() - t0} in {os.getpid()} with {nb} pairs, there are {nb_actual_imgs} figures")
-    """
-    if nb_actual_imgs < nb:
+    
+    if nb_actual_imgs != nb:
         with open("debug.tex", "w") as fd:
-            fd.write(latex)
-        sys.exit(0)
-    """
+            fd.write(latexs)
+        #sys.exit(0)
+
     
 def node_to_string(tex_tree):
     """
