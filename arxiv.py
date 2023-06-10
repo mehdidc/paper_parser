@@ -320,6 +320,7 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
                 img, data, full_name = imgs[0]
             elif len(imgs) > 1:
                 
+                # heuristic to find if figures are concatenated horizontally or vertically
                 c = caption.lower()
                 #left_or_right = "(left)" in c or "(right)" in c or r"\textbf{left}" in c or r"\textbf(right)" in c
                 #top_or_bottom = "(top)" in c or "(bottom)" in c or  r"\textbf{top}" in c or r"\textbf(bottom)" in c
@@ -332,9 +333,7 @@ def parse_arxiv_paper_tar_gz(fd, url, extract=("figure_captions",)):
                     horiz = True
                 elif not left_or_right and top_or_bottom:
                     horiz = False
-                else:
-                    horiz = True
-                    
+                else:                    
                     total_width = sum(img.width for img, data, fn in imgs)
                     max_height = max(img.height for img, data, fn in imgs)
                     Wa = total_width

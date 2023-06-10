@@ -99,10 +99,12 @@ def extract(filelist, *, start=0, nb:int=None, nb_shards=1, path_shards=".", num
     else:
         end = start + nb
     filelist = filelist[start:end]
+    print("Start", filelist)
     if resume:
         import re
-        names = re.findall("'(.+)'", open(resume).read())
+        names = re.findall("Finished \['(.+)'\]", open(resume).read())
         names = set(names)
+        print("nb existing", len(names))
         filelist = [fs for fs in filelist if fs not in names]
     if not len(filelist):
         return
